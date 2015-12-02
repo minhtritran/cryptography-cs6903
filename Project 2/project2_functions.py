@@ -2,6 +2,11 @@ import smtplib
 import imaplib
 import email
 
+from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import padding
+
 #constants
 ALICE_ADDR = "alice.crypto.project@gmail.com"
 BOB_ADDR = "bob.crypto.project@gmail.com"
@@ -46,12 +51,25 @@ def readMail(addr):
 	}
 
 
-# test code for sending mail
-test_subject = "Crypto"
-print "Enter email body: "
-test_body = raw_input()
-sendMail(ALICE_ADDR, BOB_ADDR, test_subject, test_body)
+def encryptRSA(public_key, message):
+	ciphertext = public_key.encrypt(
+		message,
+		padding.OAEP(
+			mgf=padding.MGF1(algorithm=hashes.SHA1()),
+			algorithm=hashes.SHA1(),
+			label=None
+		)
+	)
+	return ciphertext
 
-# test code for reading mail
-# data = readMail(BOB_ADDR)
-# print data['body']
+
+def decryptRSA(private_key, ciphertext):
+	plaintext = private_key.decrypt(
+		ciphertext,
+		padding.OAEP(
+			mgf=padding.MGF1(algorithm=hashes.SHA1()),
+			algorithm=hashes.SHA1(),
+			label=None
+		)
+	)
+	return plaintext
