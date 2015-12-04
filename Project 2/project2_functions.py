@@ -6,10 +6,12 @@ import base64
 import time
 import struct
 
+from datetime import datetime
+from dateutil import parser
+
 from email.MIMEText import MIMEText
 from cryptography.hazmat.backends import default_backend
-from cryptography.hazmat.primitives import hashes, padding, serialization
-from cryptography.hazmat.primitives.asymmetric import rsa, padding
+from cryptography.hazmat.primitives import hashes, padding, serialization, asymmetric
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.hmac import HMAC
 
@@ -55,19 +57,28 @@ def readMail(addr):
 
 	email_message = email.message_from_string(raw_email)
 
+	#Fri, 04 Dec 2015 10:16:34 -0800 (PST)
+	parenIndex = email_message['Date'].index('(')
+	timezone = email_message['Date'][parenIndex-6:parenIndex-1]
+	#date_object = datetime.strptime(email_message['Date'], '%a, %d %b %Y %H:%M:%S ' + timezone + ' (%Z)')
+	date_object = parser.parse(email_message['Date'])
+	
+	print (int(time.mktime(date_object.timetuple())))
+
 	return {
 		'to': email_message['To'],
 		'from': email.utils.parseaddr(email_message['From'])[1],
 		'subject': email_message['Subject'],
-		'body': base64.b64decode(email_message.get_payload(None, True))
+		'body': base64.b64decode(email_message.get_payload(None, True)),
+		'date': email_message['Date']
 	}
 
 
 def encryptRSA(public_key, message):
 	ciphertext = public_key.encrypt(
 		message,
-		padding.OAEP(
-			mgf=padding.MGF1(algorithm=hashes.SHA1()),
+		asymmetric.padding.OAEP(
+			mgf=asymmetric.padding.MGF1(algorithm=hashes.SHA1()),
 			algorithm=hashes.SHA1(),
 			label=None
 		)
@@ -78,8 +89,8 @@ def encryptRSA(public_key, message):
 def decryptRSA(private_key, ciphertext):
 	plaintext = private_key.decrypt(
 		ciphertext,
-		padding.OAEP(
-			mgf=padding.MGF1(algorithm=hashes.SHA1()),
+		asymmetric.padding.OAEP(
+			mgf=asymmetric.padding.MGF1(algorithm=hashes.SHA1()),
 			algorithm=hashes.SHA1(),
 			label=None
 		)
@@ -102,7 +113,7 @@ def loadPrivateKeyRSA(keystore_filename):
 			backend=default_backend()
 		)
 	else:
-		private_key = rsa.generate_private_key(
+		private_key = asymmetric.rsa.generate_private_key(
 			public_exponent=65537,
 			key_size=2048,
 			backend=default_backend()
@@ -116,6 +127,7 @@ def loadPrivateKeyRSA(keystore_filename):
 	keystore.close()
 
 	return private_key
+
 	
 def encryptThenMac(data, key):
 	#set up keys, current timestamp and initialization vector
@@ -131,8 +143,37 @@ def encryptThenMac(data, key):
 	cipher = encryptor.update(paddedData) + encryptor.finalize()
 	
 	#get the HMAC using SHA256 of the combined parts and return everything combined
-	parts = (b"\x80" + struct.pack(">Q", currTime) + iv + cipher)
-	hash = HMAC(signKey, hashes.SHA256(), backend=default_backend())
-	hash.update(parts)
-	hmac = hash.finalize()
+	parts = (b"\x80" + struct.pack(">Q", curTime) + iv + cipher)
+	hasher = HMAC(signKey, hashes.SHA256(), backend=default_backend())
+	hasher.update(parts)
+	hmac = hasher.finalize()
 	return base64.urlsafe_b64encode(parts + hmac)
+
+
+def verifyThenDecrypt(cipher, emailTime, key):
+	encryptKey = key[16:]
+	signKey = key[:16]
+	data = base64.urlsafe_b64decode(cipher)
+
+	timestamp, = struct.unpack(">Q", data[1:9])
+	#TODO: check timestamp
+
+	#verify HMAC
+	hasher = HMAC(signKey, hashes.SHA256(), backend=default_backend())
+	hasher.update(data[:-32])
+	try:
+		hasher.verify(data[-32:])
+	except InvalidSignature:
+		raise InvalidToken
+
+	#decrypt cipher text
+	iv = data[9:25]
+	ciphertext = data[25:-32]
+	decryptor = Cipher(algorithms.AES(encryptKey), modes.CBC(iv), default_backend()).decryptor()
+	paddedPlaintext = decryptor.update(ciphertext)
+	paddedPlaintext += decryptor.finalize()
+	unpadder = padding.PKCS7(algorithms.AES.block_size).unpadder()
+	plaintext = unpadder.update(paddedPlaintext)
+	plaintext += unpadder.finalize()
+
+	return plaintext

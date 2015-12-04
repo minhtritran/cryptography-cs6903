@@ -4,5 +4,6 @@ from project2_functions import *
 private_key = loadPrivateKeyRSA(ALICE_KEYSTORE_FILENAME)
 
 data = readMail(BOB_ADDR)
+#print data
 
 print decryptRSA(private_key, data['body'])

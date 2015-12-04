@@ -9,4 +9,8 @@ public_key = private_key.public_key()
 
 ciphertext = encryptRSA(public_key, test_body)
 
+key = os.urandom(32)
+cipher = encryptThenMac(test_body, key)
+print verifyThenDecrypt(cipher, 1, key)
+
 sendMail(ALICE_ADDR, BOB_ADDR, test_subject, ciphertext)
