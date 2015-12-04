@@ -3,13 +3,15 @@ import imaplib
 import email
 import os
 import base64
+import time
+import struct
 
 from email.MIMEText import MIMEText
 from cryptography.hazmat.backends import default_backend
-from cryptography.hazmat.primitives.asymmetric import rsa
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.asymmetric import padding
-from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives import hashes, padding, serialization
+from cryptography.hazmat.primitives.asymmetric import rsa, padding
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.primitives.hmac import HMAC
 
 #constants
 ALICE_ADDR = "alice.crypto.project@gmail.com"
@@ -114,3 +116,23 @@ def loadPrivateKeyRSA(keystore_filename):
 	keystore.close()
 
 	return private_key
+	
+def encryptThenMac(data, key):
+	#set up keys, current timestamp and initialization vector
+	encryptKey = key[16:]
+	signKey = key[:16]
+	curTime = int(time.time())
+	iv = os.urandom(16)
+	
+	#pad the data and encrypt using AES in CBC mode
+	padder = padding.PKCS7(algorithms.AES.block_size).padder()
+	paddedData = padder.update(data) + padder.finalize()
+	encryptor = Cipher(algorithms.AES(encryptKey), modes.CBC(iv), default_backend()).encryptor()
+	cipher = encryptor.update(paddedData) + encryptor.finalize()
+	
+	#get the HMAC using SHA256 of the combined parts and return everything combined
+	parts = (b"\x80" + struct.pack(">Q", currTime) + iv + cipher)
+	hash = HMAC(signKey, hashes.SHA256(), backend=default_backend())
+	hash.update(parts)
+	hmac = hash.finalize()
+	return base64.urlsafe_b64encode(parts + hmac)
