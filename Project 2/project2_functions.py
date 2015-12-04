@@ -21,6 +21,7 @@ ALICE_KEYSTORE_FILENAME = "keystore_alice.txt"
 BOB_ADDR = "bob.crypto.project@gmail.com"
 BOB_KEYSTORE_FILENAME = "keystore_bob.txt"
 PASSWORD = "cryptography"
+TTL = 5
 
 def sendMail(from_addr, to_addr, subject, body):
 	msg = MIMEText(base64.b64encode(body))
@@ -155,8 +156,10 @@ def verifyThenDecrypt(cipher, emailTime, key):
 	signKey = key[:16]
 	data = base64.urlsafe_b64decode(cipher)
 
+	#verify timestamp to prevent replay
 	timestamp, = struct.unpack(">Q", data[1:9])
-	#TODO: check timestamp
+	if timestamp + TTL < emailTime:
+		raise InvalidTime
 
 	#verify HMAC
 	hasher = HMAC(signKey, hashes.SHA256(), backend=default_backend())
@@ -164,7 +167,7 @@ def verifyThenDecrypt(cipher, emailTime, key):
 	try:
 		hasher.verify(data[-32:])
 	except InvalidSignature:
-		raise InvalidToken
+		raise InvalidSignature
 
 	#decrypt cipher text
 	iv = data[9:25]
