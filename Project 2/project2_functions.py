@@ -24,6 +24,45 @@ PASSWORD = "cryptography"
 SUBJECT_PREFIX = "Crypto:"
 TTL = 5
 
+def connect(my_addr, my_keystore_filename, other_addr):
+	# if already connected
+	shared_key = loadSharedKey(my_keystore_filename)
+	if shared_key:
+		return shared_key
+
+	private_key = loadPrivateKeyRSA(my_keystore_filename, False)
+	data = readMail(my_addr)
+
+	# retrieve shared key
+	if private_key and "shared_key" in data['subject']:
+		shared_key = decryptRSA(private_key, data['body'])
+		storeSharedKey(my_keystore_filename, shared_key)
+		return shared_key
+
+	# send shared key
+	if "pk" in data['subject']:
+		public_key = serialization.load_pem_public_key(data['body'], backend=default_backend())
+		shared_key = loadSharedKey(my_keystore_filename)
+		if not shared_key:
+			shared_key = storeSharedKey(my_keystore_filename)
+		ciphertext = encryptRSA(public_key, shared_key)
+		sendMail(my_addr, other_addr, SUBJECT_PREFIX + "shared_key", ciphertext)
+		return shared_key
+
+	# send public key
+	else:
+		private_key = loadPrivateKeyRSA(my_keystore_filename)
+		public_key = private_key.public_key()
+
+		public_key_str = public_key.public_bytes(
+			encoding=serialization.Encoding.PEM, 
+			format=serialization.PublicFormat.SubjectPublicKeyInfo
+		)
+		sendMail(my_addr, other_addr, SUBJECT_PREFIX + "pk", public_key_str)
+
+	return False
+
+
 def sendMail(from_addr, to_addr, subject, body):
 	msg = MIMEText(base64.b64encode(body))
 	msg['Subject'] = subject
@@ -52,6 +91,9 @@ def readMail(addr):
 	mail.select("inbox")
 
 	result, data = mail.uid('search', None, "ALL")
+
+	if not data[0]:
+		return {'to': "", 'from': "", 'subject': "", 'body': "", 'date': ""}
 
 	latest_email_uid = data[0].split()[-1]
 	result, data = mail.uid('fetch', latest_email_uid, '(RFC822)')
@@ -100,7 +142,7 @@ def decryptRSA(private_key, ciphertext):
 	return plaintext
 
 
-def loadPrivateKeyRSA(keystore_filename):
+def loadPrivateKeyRSA(keystore_filename, auto_generate=True):
 	if os.path.exists(keystore_filename):
 		keystore = open(keystore_filename, "r+")
 	else:
@@ -125,16 +167,19 @@ def loadPrivateKeyRSA(keystore_filename):
 			backend=default_backend()
 		)
 	else:
-		private_key = asymmetric.rsa.generate_private_key(
-			public_exponent=65537,
-			key_size=2048,
-			backend=default_backend()
-		)
-		keystore.write(private_key.private_bytes(
-			encoding=serialization.Encoding.PEM, 
-			format=serialization.PrivateFormat.PKCS8, 
-			encryption_algorithm=serialization.NoEncryption()
-		))
+		if auto_generate:
+			private_key = asymmetric.rsa.generate_private_key(
+				public_exponent=65537,
+				key_size=2048,
+				backend=default_backend()
+			)
+			keystore.write(private_key.private_bytes(
+				encoding=serialization.Encoding.PEM, 
+				format=serialization.PrivateFormat.PKCS8, 
+				encryption_algorithm=serialization.NoEncryption()
+			))
+		else:
+			private_key = ""
 
 	keystore.close()
 
@@ -142,7 +187,10 @@ def loadPrivateKeyRSA(keystore_filename):
 
 
 def loadSharedKey(keystore_filename):
-	keystore = open(keystore_filename, "r+")
+	if os.path.exists(keystore_filename):
+		keystore = open(keystore_filename, "r+")
+	else:
+		return ""
 
 	encoded_key = ""
 	for line in keystore:
@@ -163,6 +211,8 @@ def storeSharedKey(keystore_filename, shared_key=os.urandom(32)):
 	keystore = open(keystore_filename, "a")
 	encoded_key = base64.b64encode(shared_key)
 	keystore.write("shared_key: " + encoded_key + "\n")
+
+	keystore.close()	
 	return shared_key
 	
 
