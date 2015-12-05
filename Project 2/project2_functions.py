@@ -16,13 +16,52 @@ from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.hmac import HMAC
 
 #constants
-ALICE_ADDR = "alice.crypto.project@gmail.com"
-ALICE_KEYSTORE_FILENAME = "keystore_alice.txt"
-BOB_ADDR = "bob.crypto.project@gmail.com"
-BOB_KEYSTORE_FILENAME = "keystore_bob.txt"
 PASSWORD = "cryptography"
 SUBJECT_PREFIX = "Crypto:"
 TTL = 5
+
+def handleCommands(my_addr, my_keystore, other_addr):
+	print "Enter command:"
+	print "\t1: Request connection"
+	print "\t2: Send message"
+	print "\t3: Read most recent message"
+	print "\t4: Close connection"
+
+	command = raw_input()
+
+	if command is "1":
+		if connect(my_addr, my_keystore, other_addr):
+			print "Successfully connected"
+		else:
+			print "Connection request sent"
+	elif command is "2":
+		shared_key = connect(my_addr, my_keystore, other_addr)
+		if not shared_key:
+			print "No connection was established yet.  Connection request sent."
+		else:
+			print "Enter your message:"
+			body = raw_input()
+			ciphertext = encryptThenMac(body, shared_key)
+			sendMail(my_addr, other_addr, SUBJECT_PREFIX + "conversation", ciphertext)
+	elif command is "3":
+		shared_key = connect(my_addr, my_keystore, other_addr)
+		if not shared_key:
+			print "No connection was established yet.  Connection request sent."
+		else:
+			data = readMail(my_addr)
+			if SUBJECT_PREFIX + 'conversation' in data['subject']:
+				message = verifyThenDecrypt(data['body'], data['timestamp'], shared_key)
+				print "Date: " + data['date']
+				print "From: " + data['from']
+				print "Subject: " + data['subject']
+				print "Message: " + message
+			else:
+				print "No valid message"
+	elif command is "4":
+		print "close connection"
+	else:
+		print "Invalid command"
+
 
 def connect(my_addr, my_keystore_filename, other_addr):
 	# if already connected
@@ -34,13 +73,13 @@ def connect(my_addr, my_keystore_filename, other_addr):
 	data = readMail(my_addr)
 
 	# retrieve shared key
-	if private_key and "shared_key" in data['subject']:
+	if private_key and SUBJECT_PREFIX + "shared_key" in data['subject']:
 		shared_key = decryptRSA(private_key, data['body'])
 		storeSharedKey(my_keystore_filename, shared_key)
 		return shared_key
 
 	# send shared key
-	if "pk" in data['subject']:
+	if SUBJECT_PREFIX + "pk" in data['subject']:
 		public_key = serialization.load_pem_public_key(data['body'], backend=default_backend())
 		shared_key = loadSharedKey(my_keystore_filename)
 		if not shared_key:
