@@ -1,16 +1,28 @@
 from project2_functions import *
 
-test_subject = "Crypto 2"
-print "Enter email body: "
-test_body = raw_input()
-
+# send public key to bob
 private_key = loadPrivateKeyRSA(ALICE_KEYSTORE_FILENAME)
 public_key = private_key.public_key()
 
-ciphertext = encryptRSA(public_key, test_body)
+public_key_str = public_key.public_bytes(
+	encoding=serialization.Encoding.PEM, 
+	format=serialization.PublicFormat.SubjectPublicKeyInfo
+)
+sendMail(ALICE_ADDR, BOB_ADDR, SUBJECT_PREFIX + "pk", public_key_str)
 
-key = os.urandom(32)
-cipher = encryptThenMac(test_body, key)
-print verifyThenDecrypt(cipher, 1, key)
+# recieve RSA encryped shared key from bob
+# data = readMail(ALICE_ADDR)
+# shared_key = decryptRSA(private_key, data['body'])
+# storeSharedKey(ALICE_KEYSTORE_FILENAME, shared_key)
 
-sendMail(ALICE_ADDR, BOB_ADDR, test_subject, ciphertext)
+
+# print "Enter email body: "
+# test_body = raw_input()
+
+# ciphertext = encryptRSA(public_key, test_body)
+
+# key = os.urandom(32)
+# cipher = encryptThenMac(test_body, key)
+# print verifyThenDecrypt(cipher, 1, key)
+
+# sendMail(ALICE_ADDR, BOB_ADDR, test_subject, ciphertext)

@@ -21,6 +21,7 @@ ALICE_KEYSTORE_FILENAME = "keystore_alice.txt"
 BOB_ADDR = "bob.crypto.project@gmail.com"
 BOB_KEYSTORE_FILENAME = "keystore_bob.txt"
 PASSWORD = "cryptography"
+SUBJECT_PREFIX = "Crypto:"
 TTL = 5
 
 def sendMail(from_addr, to_addr, subject, body):
@@ -64,7 +65,7 @@ def readMail(addr):
 	#date_object = datetime.strptime(email_message['Date'], '%a, %d %b %Y %H:%M:%S ' + timezone + ' (%Z)')
 	date_object = parser.parse(email_message['Date'])
 	
-	print (int(time.mktime(date_object.timetuple())))
+	# print (int(time.mktime(date_object.timetuple())))
 
 	return {
 		'to': email_message['To'],
@@ -101,12 +102,22 @@ def decryptRSA(private_key, ciphertext):
 
 def loadPrivateKeyRSA(keystore_filename):
 	if os.path.exists(keystore_filename):
-		keystore = open(keystore_filename, "rb")
+		keystore = open(keystore_filename, "r+")
 	else:
 		keystore = open(keystore_filename, "w+")
 
-	pem_private_key = keystore.read()
-		
+	pem_private_key = ""
+	key_begins = False
+	for line in keystore:
+		if "-----BEGIN PRIVATE KEY-----" in line:
+			key_begins = True
+
+		if key_begins:
+			pem_private_key += line
+
+		if "-----END PRIVATE KEY-----" in line:
+			key_begins = False
+
 	if pem_private_key:
 		private_key = serialization.load_pem_private_key(
 			pem_private_key, 
@@ -129,7 +140,32 @@ def loadPrivateKeyRSA(keystore_filename):
 
 	return private_key
 
+
+def loadSharedKey(keystore_filename):
+	keystore = open(keystore_filename, "r+")
+
+	encoded_key = ""
+	for line in keystore:
+		if "shared_key: " in line:
+			encoded_key = line[12:]
+
+	if encoded_key:
+		shared_key = base64.b64decode(encoded_key)
+	else:
+		shared_key = ""
+
+	keystore.close()
+
+	return shared_key
+
+
+def storeSharedKey(keystore_filename, shared_key=os.urandom(32)):
+	keystore = open(keystore_filename, "a")
+	encoded_key = base64.b64encode(shared_key)
+	keystore.write("shared_key: " + encoded_key + "\n")
+	return shared_key
 	
+
 def encryptThenMac(data, key):
 	#set up keys, current timestamp and initialization vector
 	encryptKey = key[16:]
