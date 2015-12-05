@@ -101,20 +101,18 @@ def readMail(addr):
 
 	email_message = email.message_from_string(raw_email)
 
-	#Fri, 04 Dec 2015 10:16:34 -0800 (PST)
-	parenIndex = email_message['Date'].index('(')
-	timezone = email_message['Date'][parenIndex-6:parenIndex-1]
-	#date_object = datetime.strptime(email_message['Date'], '%a, %d %b %Y %H:%M:%S ' + timezone + ' (%Z)')
+	#create timestamp field based on email datetime
 	date_object = parser.parse(email_message['Date'])
-	
-	# print (int(time.mktime(date_object.timetuple())))
+	utc_time = date_object.replace(tzinfo=None) - date_object.utcoffset()
+	timestamp = (utc_time - datetime(1970, 1, 1)).total_seconds()
 
 	return {
 		'to': email_message['To'],
 		'from': email.utils.parseaddr(email_message['From'])[1],
 		'subject': email_message['Subject'],
 		'body': base64.b64decode(email_message.get_payload(None, True)),
-		'date': email_message['Date']
+		'date': email_message['Date'],
+		'timestamp': int(timestamp)
 	}
 
 
