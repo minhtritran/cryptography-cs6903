@@ -380,9 +380,9 @@ def verifyThenDecrypt(cipher, emailTime, key):
 	try:
 		timestamp, = struct.unpack(">Q", payload[1:9])
 	except struct.error:
-		raise InvalidToken
+		raise ValueError('Invalid message')
 	if timestamp + TTL < emailTime:
-		raise InvalidToken
+		raise Exception('Invalid timestamp: replay attack detected')
 
 	#verify HMAC
 	hasher = HMAC(signKey, hashes.SHA256(), backend=default_backend())
@@ -390,7 +390,7 @@ def verifyThenDecrypt(cipher, emailTime, key):
 	try:
 		hasher.verify(payload[-32:])
 	except InvalidSignature:
-		raise InvalidToken
+		raise Exception('Invalid HMAC: data modification detected')
 
 	#decrypt cipher text
 	iv = payload[9:25]
