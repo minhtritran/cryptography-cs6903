@@ -5,50 +5,49 @@ import os
 import base64
 import time
 import struct
-
 from datetime import datetime
 from dateutil import parser
-
 from email.MIMEText import MIMEText
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes, padding, serialization, asymmetric
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.hmac import HMAC
 
-#constants
+# constants
 PASSWORD = "cryptography"
 SUBJECT_PREFIX = "Crypto:"
 TTL = 5
 
+# handle user input
 def handleCommands(my_addr, my_keystore, other_addr):
 	print "Enter command:"
 	print "\t1: Request connection"
 	print "\t2: Send message"
 	print "\t3: Read most recent message"
-	print "\t4: Close connection"
+	print "\t4: Show conversation history"
+	print "\t5: Close connection"
 
 	command = raw_input()
 
+	# request a connection to the other party
 	if command is "1":
 		if connect(my_addr, my_keystore, other_addr):
 			print "Successfully connected"
-		else:
-			print "Connection request sent"
+
+	# send a message to the other party
 	elif command is "2":
 		shared_key = connect(my_addr, my_keystore, other_addr)
-		if not shared_key:
-			print "No connection was established yet.  Connection request sent."
-		else:
+		if shared_key:
 			print "Enter your message:"
 			body = raw_input()
 			ciphertext = encryptThenMac(body, shared_key)
 			sendMail(my_addr, other_addr, SUBJECT_PREFIX + "conversation", ciphertext)
+	
+	# read the most recent message from the other party
 	elif command is "3":
 		shared_key = connect(my_addr, my_keystore, other_addr)
-		if not shared_key:
-			print "No connection was established yet.  Connection request sent."
-		else:
-			data = readMail(my_addr)
+		if shared_key:
+			data = readRecentMail(my_addr)
 			if SUBJECT_PREFIX + 'conversation' in data['subject']:
 				message = verifyThenDecrypt(data['body'], data['timestamp'], shared_key)
 				print "Date: " + data['date']
@@ -57,29 +56,59 @@ def handleCommands(my_addr, my_keystore, other_addr):
 				print "Message: " + message
 			else:
 				print "No valid message"
+
+	# show the conversation history between you and the other party
 	elif command is "4":
-		print "close connection"
+		shared_key = connect(my_addr, my_keystore, other_addr)
+		if shared_key:
+			displayConversation(my_addr, other_addr, shared_key)
+
+	# close connection
+	elif command is "5":
+		shared_key = connect(my_addr, my_keystore, other_addr)
+		if shared_key:
+			ciphertext = encryptThenMac(shared_key, shared_key)
+			sendMail(my_addr, other_addr, SUBJECT_PREFIX + "close", ciphertext)
+			os.remove(my_keystore)
+			print "Closed connection"
+	
 	else:
 		print "Invalid command"
 
 
+# request connection to the other email address
+# returns the shared key if connection is established
+# returns false otherwise
+# connection is done in two steps:
+#	step 1: party 1 sends their public key to party 2
+#	step 2: party 2 receives it, and then sends a shared key to party 1
 def connect(my_addr, my_keystore_filename, other_addr):
-	# if already connected
+	data = readRecentMail(my_addr)
+
 	shared_key = loadSharedKey(my_keystore_filename)
 	if shared_key:
-		return shared_key
-
-	private_key = loadPrivateKeyRSA(my_keystore_filename, False)
-	data = readMail(my_addr)
+		# close connection if other party sent a 'close' message and if it matches our shared key
+		# else, return the stored shared key
+		if SUBJECT_PREFIX + "close" in data['subject']:
+			message = verifyThenDecrypt(data['body'], data['timestamp'], shared_key)
+			if message == shared_key:
+				os.remove(my_keystore_filename)
+				print "The other party closed the connection"
+				return False
+			else:
+				return shared_key
+		else:
+			return shared_key
 
 	# retrieve shared key
+	private_key = loadPrivateKeyRSA(my_keystore_filename, False)
 	if private_key and SUBJECT_PREFIX + "shared_key" in data['subject']:
 		shared_key = decryptRSA(private_key, data['body'])
 		storeSharedKey(my_keystore_filename, shared_key)
 		return shared_key
 
 	# send shared key
-	if SUBJECT_PREFIX + "pk" in data['subject']:
+	elif SUBJECT_PREFIX + "pk" in data['subject']:
 		public_key = serialization.load_pem_public_key(data['body'], backend=default_backend())
 		shared_key = loadSharedKey(my_keystore_filename)
 		if not shared_key:
@@ -98,17 +127,17 @@ def connect(my_addr, my_keystore_filename, other_addr):
 			format=serialization.PublicFormat.SubjectPublicKeyInfo
 		)
 		sendMail(my_addr, other_addr, SUBJECT_PREFIX + "pk", public_key_str)
+		print "No connection was established yet.  Connection request has been sent."
 
 	return False
 
 
+# send email
 def sendMail(from_addr, to_addr, subject, body):
 	msg = MIMEText(base64.b64encode(body))
 	msg['Subject'] = subject
 	msg['From'] = from_addr
 	msg['To'] = to_addr
-
-	#message = """From: %s\nTo: %s\nSubject: %s\n\n%s""" % (from_addr, to_addr, subject, body)
 
 	try:
 		server = smtplib.SMTP('smtp.gmail.com', 587)
@@ -117,25 +146,14 @@ def sendMail(from_addr, to_addr, subject, body):
 		server.login(from_addr, PASSWORD)
 		server.sendmail(from_addr, to_addr, msg.as_string())
 		server.close()
-		print "successfully send mail"
+		print "Successfully sent mail"
 	except:
-		print "failed to send mail"
+		print "Failed to send mail"
 
 
-# return most recent mail
-def readMail(addr):
-	mail = imaplib.IMAP4_SSL('imap.gmail.com')
-	mail.login(addr, PASSWORD)
-	mail.list()
-	mail.select("inbox")
-
-	result, data = mail.uid('search', None, "ALL")
-
-	if not data[0]:
-		return {'to': "", 'from': "", 'subject': "", 'body': "", 'date': ""}
-
-	latest_email_uid = data[0].split()[-1]
-	result, data = mail.uid('fetch', latest_email_uid, '(RFC822)')
+# fetch the email given the IMAP mail object and the email's uid
+def fetchMailByUID(mail, uid):
+	result, data = mail.uid('fetch', uid, '(RFC822)')
 	raw_email = data[0][1]
 
 	email_message = email.message_from_string(raw_email)
@@ -155,6 +173,64 @@ def readMail(addr):
 	}
 
 
+# return most recent mail in inbox
+def readRecentMail(addr):
+	mail = imaplib.IMAP4_SSL('imap.gmail.com')
+	mail.login(addr, PASSWORD)
+	
+	mail.list()
+	mail.select("inbox")
+	result, data = mail.uid('search', None, "ALL")
+
+	if not data[0]:
+		return {'to': "", 'from': "", 'subject': "", 'body': "", 'date': ""}
+
+	latest_email_uid = data[0].split()[-1]
+	
+	return fetchMailByUID(mail, latest_email_uid)
+
+
+# display conversation between two given parties using the given key
+def displayConversation(my_addr, other_addr, shared_key):
+	mail = imaplib.IMAP4_SSL('imap.gmail.com')
+	mail.login(my_addr, PASSWORD)
+	
+	conversation = []
+
+	# get all relevant emails from inbox
+	mail.select("inbox")
+	result, data = mail.uid('search', None, "ALL")
+	for email_num in list(reversed(data[0].split())):
+		email = fetchMailByUID(mail, email_num)
+
+		if SUBJECT_PREFIX + "pk" in email['subject'] or SUBJECT_PREFIX + "shared_key" in email['subject']:
+			break
+
+		if email['to'] == my_addr and email['from'] == other_addr and SUBJECT_PREFIX + "conversation" in email['subject']:
+			conversation.append(email)
+
+	# get all relevant emails from 'sent'
+	mail.select("[Gmail]/Sent Mail")
+	result, data = mail.uid('search', None, "ALL")
+	for email_num in list(reversed(data[0].split())):
+		email = fetchMailByUID(mail, email_num)
+
+		if SUBJECT_PREFIX + "pk" in email['subject'] or SUBJECT_PREFIX + "shared_key" in email['subject']:
+			break
+
+		if email['to'] == other_addr and email['from'] == my_addr and SUBJECT_PREFIX + "conversation" in email['subject']:
+			conversation.append(email)
+
+	# sort emails by timestamp
+	conversation.sort(key = lambda x: x['timestamp'], reverse=False)
+	
+	# decrypt and display conversation
+	for item in conversation:
+		message = verifyThenDecrypt(item['body'], item['timestamp'], shared_key)
+		print item['from'] + ":\t" + message
+
+
+# encrypt the given message using the given RSA public key and return the ciphertext
 def encryptRSA(public_key, message):
 	ciphertext = public_key.encrypt(
 		message,
@@ -167,6 +243,7 @@ def encryptRSA(public_key, message):
 	return ciphertext
 
 
+# encrypt the given ciphertext using the given RSA private key and return the message
 def decryptRSA(private_key, ciphertext):
 	plaintext = private_key.decrypt(
 		ciphertext,
@@ -179,12 +256,17 @@ def decryptRSA(private_key, ciphertext):
 	return plaintext
 
 
+# given a keystore file, return the RSA private key
+# if it doesn't exist and auto_generate flag is set to true, create one and return it
+# if false, return a blank string
 def loadPrivateKeyRSA(keystore_filename, auto_generate=True):
+	# open file
 	if os.path.exists(keystore_filename):
 		keystore = open(keystore_filename, "r+")
 	else:
 		keystore = open(keystore_filename, "w+")
 
+	# read file line by line to get the PEM-formatted private key
 	pem_private_key = ""
 	key_begins = False
 	for line in keystore:
@@ -197,6 +279,7 @@ def loadPrivateKeyRSA(keystore_filename, auto_generate=True):
 		if "-----END PRIVATE KEY-----" in line:
 			key_begins = False
 
+	# if it exists, decode the PEM-formatted private key
 	if pem_private_key:
 		private_key = serialization.load_pem_private_key(
 			pem_private_key, 
@@ -204,6 +287,7 @@ def loadPrivateKeyRSA(keystore_filename, auto_generate=True):
 			backend=default_backend()
 		)
 	else:
+		# if it does not exist, generate one and also write it to file
 		if auto_generate:
 			private_key = asymmetric.rsa.generate_private_key(
 				public_exponent=65537,
@@ -215,6 +299,7 @@ def loadPrivateKeyRSA(keystore_filename, auto_generate=True):
 				format=serialization.PrivateFormat.PKCS8, 
 				encryption_algorithm=serialization.NoEncryption()
 			))
+		# if no keys exists and auto_generate is set to false, return a blank string
 		else:
 			private_key = ""
 
@@ -223,12 +308,15 @@ def loadPrivateKeyRSA(keystore_filename, auto_generate=True):
 	return private_key
 
 
+# given keystore file, return the stored shared key or a blank string if it doesn't exist
 def loadSharedKey(keystore_filename):
+	# open file
 	if os.path.exists(keystore_filename):
 		keystore = open(keystore_filename, "r+")
 	else:
 		return ""
 
+	# read file line by line to find the encoded shared key
 	encoded_key = ""
 	for line in keystore:
 		if "shared_key: " in line:
@@ -244,8 +332,13 @@ def loadSharedKey(keystore_filename):
 	return shared_key
 
 
+# store (put) the given shared key into the keystore file
+# if none provided, auto generate one
 def storeSharedKey(keystore_filename, shared_key=os.urandom(32)):
+	# open file
 	keystore = open(keystore_filename, "a")
+	
+	# write key to keystore and denote it with the header "shared key: "
 	encoded_key = base64.b64encode(shared_key)
 	keystore.write("shared_key: " + encoded_key + "\n")
 
@@ -253,6 +346,8 @@ def storeSharedKey(keystore_filename, shared_key=os.urandom(32)):
 	return shared_key
 	
 
+# encrypt and tag the given data with the given key
+# uses AES/CBC for encryption and HMAC/SHA256 for tagging
 def encryptThenMac(data, key):
 	#set up keys, current timestamp and initialization vector
 	encryptKey = key[16:]
@@ -274,6 +369,7 @@ def encryptThenMac(data, key):
 	return base64.urlsafe_b64encode(parts + hmac)
 
 
+# verify and decrypt the given ciphertext with the given email time and key
 def verifyThenDecrypt(cipher, emailTime, key):
 	encryptKey = key[16:]
 	signKey = key[:16]
