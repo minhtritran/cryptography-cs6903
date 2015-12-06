@@ -373,24 +373,27 @@ def encryptThenMac(data, key):
 def verifyThenDecrypt(cipher, emailTime, key):
 	encryptKey = key[16:]
 	signKey = key[:16]
-	data = base64.urlsafe_b64decode(cipher)
+	payload = base64.urlsafe_b64decode(cipher)
 
 	#verify timestamp to prevent replay
-	timestamp, = struct.unpack(">Q", data[1:9])
+	try:
+		timestamp, = struct.unpack(">Q", payload[1:9])
+	except struct.error:
+		raise InvalidToken
 	if timestamp + TTL < emailTime:
-		raise InvalidTime
+		raise InvalidToken
 
 	#verify HMAC
 	hasher = HMAC(signKey, hashes.SHA256(), backend=default_backend())
-	hasher.update(data[:-32])
+	hasher.update(payload[:-32])
 	try:
-		hasher.verify(data[-32:])
+		hasher.verify(payload[-32:])
 	except InvalidSignature:
-		raise InvalidSignature
+		raise InvalidToken
 
 	#decrypt cipher text
-	iv = data[9:25]
-	ciphertext = data[25:-32]
+	iv = payload[9:25]
+	ciphertext = payload[25:-32]
 	decryptor = Cipher(algorithms.AES(encryptKey), modes.CBC(iv), default_backend()).decryptor()
 	paddedPlaintext = decryptor.update(ciphertext)
 	paddedPlaintext += decryptor.finalize()
