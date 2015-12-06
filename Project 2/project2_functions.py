@@ -12,6 +12,7 @@ from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes, padding, serialization, asymmetric
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.hmac import HMAC
+from cryptography.exceptions import InvalidSignature
 
 # constants
 PASSWORD = "cryptography"
